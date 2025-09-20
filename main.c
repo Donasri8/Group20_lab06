@@ -1,75 +1,89 @@
 #include <stdint.h>
 
-#define SYSCTL_RCGCGPIO_R      (*((volatile uint32_t *)0x400FE608))
-#define GPIO_PORTF_DATA_R      (*((volatile uint32_t *)0x400253FC))
-#define GPIO_PORTF_DIR_R       (*((volatile uint32_t *)0x40025400))
-#define GPIO_PORTF_DEN_R       (*((volatile uint32_t *)0x4002551C))
-#define GPIO_PORTF_PUR_R       (*((volatile uint32_t *)0x40025510))
-#define GPIO_PORTF_LOCK_R      (*((volatile uint32_t *)0x40025520))
-#define GPIO_PORTF_CR_R        (*((volatile uint32_t *)0x40025524))
-#define GPIO_PORTF_IS_R        (*((volatile uint32_t *)0x40025404))
-#define GPIO_PORTF_IBE_R       (*((volatile uint32_t *)0x40025408))
-#define GPIO_PORTF_IEV_R       (*((volatile uint32_t *)0x4002540C))
-#define GPIO_PORTF_IM_R        (*((volatile uint32_t *)0x40025410))
-#define GPIO_PORTF_ICR_R       (*((volatile uint32_t *)0x4002541C))
-#define GPIO_PORTF_MIS_R       (*((volatile uint32_t *)0x40025418))
+// Base addresses
+#define SYSCTL_BASE     0x400FE000
+#define GPIOF_BASE      0x40025000
+#define NVIC_EN0        (*(volatile uint32_t *)0xE000E100)
 
-#define NVIC_EN0_R             (*((volatile uint32_t *)0xE000E100))
-#define NVIC_PRI7_R            (*((volatile uint32_t *)0xE000E41C))
+// Registers
+#define SYSCTL_RCGCGPIO (*(volatile uint32_t *)(SYSCTL_BASE + 0x608))
+#define SYSCTL_PRGPIO   (*(volatile uint32_t *)(SYSCTL_BASE + 0xA08))
 
-#define NVIC_ST_CTRL_R         (*((volatile uint32_t *)0xE000E010))
-#define NVIC_ST_RELOAD_R       (*((volatile uint32_t *)0xE000E014))
-#define NVIC_ST_CURRENT_R      (*((volatile uint32_t *)0xE000E018))
+#define GPIOF_DATA      (*(volatile uint32_t *)(GPIOF_BASE + 0x3FC))
+#define GPIOF_DIR       (*(volatile uint32_t *)(GPIOF_BASE + 0x400))
+#define GPIOF_DEN       (*(volatile uint32_t *)(GPIOF_BASE + 0x51C))
+#define GPIOF_PUR       (*(volatile uint32_t *)(GPIOF_BASE + 0x510))
+#define GPIOF_LOCK      (*(volatile uint32_t *)(GPIOF_BASE + 0x520))
+#define GPIOF_CR        (*(volatile uint32_t *)(GPIOF_BASE + 0x524))
+#define GPIOF_IS        (*(volatile uint32_t *)(GPIOF_BASE + 0x404))
+#define GPIOF_IBE       (*(volatile uint32_t *)(GPIOF_BASE + 0x408))
+#define GPIOF_IEV       (*(volatile uint32_t *)(GPIOF_BASE + 0x40C))
+#define GPIOF_IM        (*(volatile uint32_t *)(GPIOF_BASE + 0x410))
+#define GPIOF_ICR       (*(volatile uint32_t *)(GPIOF_BASE + 0x41C))
+#define GPIOF_RIS       (*(volatile uint32_t *)(GPIOF_BASE + 0x418))
 
-#define LED_RED     (1U << 1)
-#define LED_BLUE    (1U << 2)
-#define SW2_MASK    (1U << 0)
+// Pins
+#define LED_BLUE    (1 << 2)
+#define SW1         (1 << 4)
 
-volatile uint8_t red_led_state = 0;
+// Macros
+#define ENABLE_CLOCK_F       (SYSCTL_RCGCGPIO |= (1 << 5))
+#define WAIT_PORTF_READY     while((SYSCTL_PRGPIO & (1 << 5)) == 0)
 
-void SysTick_Handler(void) {
-    GPIO_PORTF_DATA_R ^= LED_BLUE;
-}
+#define LED_OUT              (GPIOF_DIR |= LED_BLUE)
+#define SW1_IN               (GPIOF_DIR &= ~SW1)
 
-void GPIOF_Handler(void) {
-    if (GPIO_PORTF_MIS_R & SW2_MASK) {
-        GPIO_PORTF_ICR_R = SW2_MASK;
-        red_led_state ^= 1;
-        if (red_led_state)
-            GPIO_PORTF_DATA_R |= LED_RED;
-        else
-            GPIO_PORTF_DATA_R &= ~LED_RED;
+#define LED_DEN              (GPIOF_DEN |= LED_BLUE)
+#define SW1_DEN              (GPIOF_DEN |= SW1)
+
+#define SW1_PULLUP           (GPIOF_PUR |= SW1)
+
+#define TOGGLE_LED           (GPIOF_DATA ^= LED_BLUE)
+#define CLEAR_INT_SW1        (GPIOF_ICR = SW1)
+#define UNMASK_INT_SW1       (GPIOF_IM |= SW1)
+#define RISING_EDGE_SW1      (GPIOF_IEV |= SW1)
+
+#define NVIC_ENABLE_PORTF    (NVIC_EN0 |= (1 << 30))
+
+void GPIOF_Handler(void);
+
+int main(void)
+{
+    ENABLE_CLOCK_F;
+    WAIT_PORTF_READY;
+
+    GPIOF_LOCK = 0x4C4F434B;
+    GPIOF_CR   |= (LED_BLUE | SW1);
+
+    LED_OUT;
+    SW1_IN;
+
+    LED_DEN;
+    SW1_DEN;
+
+    SW1_PULLUP;
+
+    GPIOF_IS  &= ~SW1;
+    GPIOF_IBE &= ~SW1;
+    RISING_EDGE_SW1;
+    CLEAR_INT_SW1;
+    UNMASK_INT_SW1;
+
+    NVIC_ENABLE_PORTF;
+
+    __asm("CPSIE I");
+
+    while(1)
+    {
+        // Waiting for interrupt
     }
 }
 
-int main(void) {
-    volatile uint32_t delay;
-    SYSCTL_RCGCGPIO_R |= (1U << 5);
-    delay = SYSCTL_RCGCGPIO_R;
-
-    GPIO_PORTF_LOCK_R = 0x4C4F434B;
-    GPIO_PORTF_CR_R  |= (SW2_MASK | LED_RED | LED_BLUE);
-
-    GPIO_PORTF_DIR_R |= (LED_RED | LED_BLUE);
-    GPIO_PORTF_DEN_R |= (LED_RED | LED_BLUE);
-
-    GPIO_PORTF_DIR_R &= ~SW2_MASK;
-    GPIO_PORTF_DEN_R |= SW2_MASK;
-    GPIO_PORTF_PUR_R |= SW2_MASK;
-
-    GPIO_PORTF_IS_R  &= ~SW2_MASK;
-    GPIO_PORTF_IBE_R &= ~SW2_MASK;
-    GPIO_PORTF_IEV_R &= ~SW2_MASK;
-    GPIO_PORTF_ICR_R  = SW2_MASK;
-    GPIO_PORTF_IM_R  |= SW2_MASK;
-
-    NVIC_PRI7_R = (NVIC_PRI7_R & 0xFF00FFFF) | (7 << 21);
-    NVIC_EN0_R  |= (1U << 30);
-
-    NVIC_ST_RELOAD_R = 16000000 - 1;
-    NVIC_ST_CURRENT_R = 0;
-    NVIC_ST_CTRL_R = 0x07;
-
-    while (1) {
+void GPIOF_Handler(void)
+{
+    if(GPIOF_RIS & SW1)
+    {
+        CLEAR_INT_SW1;
+        TOGGLE_LED;
     }
 }
